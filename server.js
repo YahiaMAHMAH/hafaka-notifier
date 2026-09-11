@@ -47,7 +47,7 @@ async function notifyDevices(order) {
     if (!expoPushToken || !expoPushToken.startsWith("ExponentPushToken")) return;
     messages.push({
       to: expoPushToken,
-      sound: "order-alert.wav",
+      sound: "order_alert.wav",
       title: `New order #${order.orderNumber ?? ""} — ${order.customerName || "Customer"}`,
       body: itemsText || (order.total != null ? `${order.total} DA` : "A new order just came in."),
       priority: "high",
