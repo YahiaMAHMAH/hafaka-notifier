@@ -1,53 +1,54 @@
-# Hafaka notify-server (free, no card required)
+# Tawsil server (v2)
 
-Replaces the Cloud Function. Does the exact same job — watches the `orders`
-collection and pushes a sound notification to every phone in `devices` — but
-runs as a small always-on Node process instead of a Firebase Cloud Function,
-so it stays on Firebase's free **Spark** plan (no Blaze, no card).
+Watches the Firestore of every configured restaurant and sends a push notification to that restaurant's available drivers when a new delivery order arrives. It replaces the v1 single-restaurant server and runs on the same free Render service.
 
-## 1. Get a service account key (free, no card)
-Firebase Console → ⚙️ Project Settings → **Service accounts** tab →
-**Generate new private key**. Downloads a `.json` file. Keep it private —
-never commit it to GitHub.
+## What it does
 
-## 2. Create a free Render account
-render.com → sign up (no card needed for the free tier).
+- Listens to `orders` where `status == "Preparing"` for each restaurant.
+- Sends only delivery orders. Orders with a `tableNumber`, or an `orderType` such as "Table 4", "Sur place" or "À emporter", are skipped. An order with no `orderType` counts as delivery.
+- Sends only to drivers who are active, available, and have not denied the order. Admins never receive these pushes.
+- Sends each order exactly once, even across restarts or overlapping deploys, using a `push_log/{orderId}` document.
+- After a restart or a lost connection it catches up on orders created in the last 10 minutes.
+- Sends reminders at 60 and 180 seconds while the order is still unclaimed.
+- Removes dead push tokens from `devices`.
+- Re-listens automatically after a Firestore listener error.
 
-## 3. Deploy
-- New → **Web Service**
-- Connect the `notify-server` folder (push it to its own small GitHub repo,
-  or use Render's "public git repo" / manual deploy option)
-- Build command: `npm install`
-- Start command: `npm start`
-- Instance type: **Free**
-- Add an environment variable:
-  - Key: `SERVICE_ACCOUNT_JSON`
-  - Value: the ENTIRE contents of the `.json` file from step 1, pasted as
-    one line (open the file, copy everything, paste as the value)
+## Configuration
 
-Deploy. Once live, Render gives you a URL like
-`https://hafaka-notify-server.onrender.com`.
+Set one environment variable, `RESTAURANTS_JSON`, on Render. See `restaurants.example.json`. It is a JSON array, pasted as a single line:
 
-## 4. Keep it awake (free tier sleeps after 15 min idle)
-Render's free web services spin down without traffic. Fix with a free
-uptime pinger:
-- uptimerobot.com → free account → **Add New Monitor**
-- Monitor type: HTTP(s)
-- URL: your Render URL from step 3
-- Interval: every 5 minutes
+    [{"id":"hafaka","name":"Hafaka Burgers","serviceAccount":{...}},{"id":"migusto","name":"Migusto","serviceAccount":{...}}]
 
-This keeps the listener alive 24/7 for $0 — Render's free tier includes
-750 hours/month, more than enough for one always-on service.
+Each `serviceAccount` is the private key file from Firebase Console, Project settings, Service accounts, Generate new private key. Never commit it to git.
 
-## 5. Confirm it's working
-Render dashboard → Logs tab → you should see `notify-server up`. Create a
-test order (status: "Preparing") in Firestore and watch for
-`Pushed order #... to N device(s).` in the logs within a second or two.
+For backward compatibility, if `RESTAURANTS_JSON` is missing and the old `SERVICE_ACCOUNT_JSON` is set, the server runs as the single restaurant "hafaka".
 
-## Trade-offs vs. the Cloud Function version
-- Same real-time speed (Firestore listener, not polling).
-- Slight risk: if Render has downtime or the free instance restarts,
-  there's a brief gap before it reconnects — rare, but worth knowing.
-- If you ever add a card later, switching back to the Cloud Function
-  (`functions/index.js`, already in this project) takes 5 minutes and is
-  slightly more reliable long-term.
+Optional variables: `CHANNEL_ID` (default `orders_v1`), `SOUND` (default `order_alert.wav`), `CATCHUP_MINUTES` (default 10), `REMINDERS_SEC` (default `60,180`, empty value disables), `EXPO_ACCESS_TOKEN`.
+
+## Deploy
+
+Push these files to the existing `hafaka-notifier` GitHub repo, then rename the repo to `tawsil-server`. Render auto-deploys. Build command `npm install`, start command `npm start`.
+
+## Keep it awake and monitored
+
+In UptimeRobot, set an HTTP monitor on `https://<your-service>.onrender.com/health` every 5 minutes with email alerts. `/health` returns 200 when every restaurant's order listener is live and 503 when one is down, so a broken listener sends you an email.
+
+## What each restaurant site needs
+
+1. A `/devices` rule that ties each device to its owner. Replace the existing rule (Hafaka) or add it (Migusto):
+
+        match /devices/{id} {
+          allow read: if isAdmin();
+          allow create, update: if isStaff()
+                                && request.resource.data.expoPushToken is string
+                                && request.resource.data.uid == request.auth.uid
+                                && id.matches(request.auth.uid + '(_.*)?');
+          allow delete: if isStaff() && (resource.data.get('uid', '') == request.auth.uid || isAdmin());
+        }
+
+2. `push_log` needs no rule. Only the server writes it, through the Admin SDK. Check that the rules file ends with a default deny for unlisted collections.
+3. No composite index is needed. The queries use one field each.
+
+## Test
+
+Place a delivery order on the site while a driver device is registered and available. The Render logs show `order <id> (new): pushed to 1/1 device(s)`.
