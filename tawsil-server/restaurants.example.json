@@ -1,0 +1,12 @@
+[
+  {
+    "id": "hafaka",
+    "name": "Hafaka Burgers",
+    "serviceAccount": { "type": "service_account", "project_id": "hafaka-burgers", "private_key": "...", "client_email": "..." }
+  },
+  {
+    "id": "migusto",
+    "name": "Migusto",
+    "serviceAccount": { "type": "service_account", "project_id": "restaurantmigusto19", "private_key": "...", "client_email": "..." }
+  }
+]
